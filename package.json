@@ -1,0 +1,58 @@
+{
+  "name": "mcp-mfiles",
+  "version": "0.1.0",
+  "description": "MCP server for exploring any M-Files vault's metadata structure (object types, classes, properties, value lists) through Claude Desktop chat.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcp-mfiles": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CLAUDE.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "smoke": "tsx scripts/smoke.ts",
+    "smoke:mcp": "npm run build && tsx scripts/mcp-flow-test.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "m-files",
+    "mfiles",
+    "claude",
+    "claude-desktop",
+    "vault",
+    "metadata"
+  ],
+  "author": "Cristian Rusu",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_GH_USERNAME/mcp-mfiles.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_GH_USERNAME/mcp-mfiles/issues"
+  },
+  "homepage": "https://github.com/YOUR_GH_USERNAME/mcp-mfiles#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.4.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  }
+}
