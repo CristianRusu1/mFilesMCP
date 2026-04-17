@@ -5,8 +5,8 @@ Thanks for your interest. This project has a narrow scope — it's a **vault-agn
 ## Local setup
 
 ```bash
-git clone https://github.com/YOUR_GH_USERNAME/mcp-mfiles.git
-cd mcp-mfiles
+git clone https://github.com/CristianRusu1/mFilesMCP.git
+cd mFilesMCP
 npm install
 cp .env.example .env   # fill in your own vault credentials
 ```
