@@ -4,7 +4,7 @@
     <TargetFramework>net472</TargetFramework>
     <AssemblyName>MFilesMCP.VaultApp</AssemblyName>
     <RootNamespace>MFilesMCP.VaultApp</RootNamespace>
-    <Version>1.0.10</Version>
+    <Version>1.0.11</Version>
     <LangVersion>7.3</LangVersion>
     <!-- A vault app is installed as a folder of DLLs, so NuGet dependencies must land in bin. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>

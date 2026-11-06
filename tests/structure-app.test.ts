@@ -5,6 +5,7 @@ import {
   STRUCTURE_APP_PROTOCOL,
   StructureJobPendingError,
   createClass,
+  createObjectType,
   createPropertyDef,
   createValueList,
   parseAppResponse,
@@ -865,5 +866,94 @@ describe("updateClass while M-Files keeps the save open", () => {
     } finally {
       setJobPollDelaysForTests([0]);
     }
+  });
+});
+
+describe("createObjectType", () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => restore?.());
+
+  const PING_WITH_METHODS: Route = {
+    method: "POST",
+    path: ext(STRUCTURE_APP_METHODS.ping),
+    text: appOk({
+      app: "MFilesMCP",
+      version: "1.0.11.0",
+      protocol: STRUCTURE_APP_PROTOCOL,
+      vault_ready: true,
+      methods: Object.values(STRUCTURE_APP_METHODS),
+    }),
+  };
+  const lists: Route[] = [
+    { path: "/REST/structure/objecttypes.aspx", json: [{ ID: 0, Name: "Document", NamePlural: "Documents", RealObjectType: true }, { ID: 104, Name: "Contract", RealObjectType: true }] },
+    { path: "/REST/valuelists.aspx", json: [{ ID: 300, Name: "Region", RealObjectType: false }] },
+  ];
+  const base = { canHaveFiles: false, allowAdding: true, aliases: [], allowDuplicateName: false, dryRun: false };
+
+  it("refuses a name an object type or value list already has", async () => {
+    const mock = await connect([PING_WITH_METHODS, ...lists]);
+    restore = mock.restore;
+    await assert.rejects(
+      () => createObjectType(mock.client, { ...base, nameSingular: "region", dryRun: true }),
+      (err: unknown) => err instanceof MFilesToolError && err.message.includes("300"),
+    );
+    await assert.rejects(
+      () => createObjectType(mock.client, { ...base, nameSingular: "Doc", namePlural: "documents", dryRun: true }),
+      (err: unknown) => err instanceof MFilesToolError && err.message.includes("Document"),
+    );
+  });
+
+  it("sends the new type and reports what M-Files added with it", async () => {
+    const mock = await connect([
+      PING_WITH_METHODS,
+      ...lists,
+      { path: "/REST/structure/objecttypes/104.aspx", json: { ID: 104, Name: "Contract", RealObjectType: true } },
+      {
+        method: "POST",
+        path: ext(STRUCTURE_APP_METHODS.createObjectType),
+        text: jobDone({
+          id: 140,
+          name_singular: "Lease",
+          name_plural: "Leases",
+          can_have_files: true,
+          allow_adding: true,
+          owner_object_type: 104,
+          owner_property_def: 1500,
+          default_property_def: 1501,
+          classes: [{ id: 90, name: "Lease" }],
+        }),
+      },
+    ]);
+    restore = mock.restore;
+    const result = await createObjectType(mock.client, {
+      ...base,
+      nameSingular: " Lease ",
+      namePlural: "Leases",
+      canHaveFiles: true,
+      ownerObjectTypeId: 104,
+    });
+    const sent = JSON.parse(mock.calls.find((c) => c.path === ext(STRUCTURE_APP_METHODS.createObjectType))!.body!);
+    assert.deepEqual(sent, {
+      name_singular: "Lease",
+      name_plural: "Leases",
+      can_have_files: true,
+      allow_adding: true,
+      owner_object_type: 104,
+      aliases: [],
+    });
+    assert.ok((result as { _hint: string })._hint.includes('class 90 "Lease"'));
+  });
+
+  it("asks for app 1.0.11 when the installed app has no such method", async () => {
+    const mock = await connect([PING_OK, ...lists]);
+    restore = mock.restore;
+    await assert.rejects(
+      () => createObjectType(mock.client, { ...base, nameSingular: "Lease" }),
+      (err: unknown) =>
+        err instanceof MFilesToolError &&
+        err.message.includes(STRUCTURE_APP_METHODS.createObjectType) &&
+        err.hint.includes("1.0.11"),
+    );
+    assert.ok(!mock.calls.some((c) => c.path === ext(STRUCTURE_APP_METHODS.createObjectType)));
   });
 });

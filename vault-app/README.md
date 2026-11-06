@@ -13,6 +13,7 @@ You only need it for these MCP tools:
 | `mfiles_get_admin_definition`, `mfiles_get_workflow`, `mfiles_list_event_handlers` | `MFilesMCP_Read` |
 | `mfiles_create_property_def` | `MFilesMCP_CreatePropertyDef` (+ `MFilesMCP_UpdateClass` for `add_to_classes`) |
 | `mfiles_update_property_def` | `MFilesMCP_UpdatePropertyDef` |
+| `mfiles_create_object_type` | `MFilesMCP_CreateObjectType` (1.0.11+) |
 | `mfiles_create_class` | `MFilesMCP_CreateClass` |
 | `mfiles_update_class` | `MFilesMCP_UpdateClass` |
 | `mfiles_create_value_list` | `MFilesMCP_CreateValueList` |
@@ -81,6 +82,7 @@ M-Files Cloud vaults only accept vault applications that M-Files has approved, s
 
 ## Version history
 
+- 1.0.11 (protocol 3): creates object types. Ping lists the app's methods, so tools that need a newer method can tell an older app apart without a protocol bump.
 - 1.0.10 (protocol 3): stops waiting for a class save call once the change shows, since M-Files 25.11 can keep it open for 2 minutes after applying it. Also recognizes the event-handler stubs that call `GetExtensionObject`.
 - 1.0.9 (protocol 3): checks aliases one by one where M-Files doesn't implement the vault-wide alias map (25.11), and shortens M-Files error messages in diagnostics.
 - 1.0.8 (protocol 3): class updates take the property list from the regular read when the admin copy is incomplete, after checking that the class's permissions and aliases agree. Generated event handler stubs can't be edited.
@@ -102,4 +104,4 @@ Before installing a new version on a production vault, go through this checklist
 
 ## Protocol
 
-Request and response bodies are JSON strings. Every method answers `{"ok":true,"result":...}` or `{"ok":false,"error":"..."}`. Job methods answer with the job: `{job_id, kind, status, step, result, error, error_code, diagnostics}`, where `status` is `queued`, `running`, `succeeded` or `failed`. `VaultApplication.Protocol` must equal `STRUCTURE_APP_PROTOCOL` in `src/structure-app.ts`, and the method names must equal `STRUCTURE_APP_METHODS`. Bump both protocol constants together whenever the contract changes. `mfiles_structure_app_status` reports a mismatch.
+Request and response bodies are JSON strings. Every method answers `{"ok":true,"result":...}` or `{"ok":false,"error":"..."}`. Job methods answer with the job: `{job_id, kind, status, step, result, error, error_code, diagnostics}`, where `status` is `queued`, `running`, `succeeded` or `failed`. `VaultApplication.Protocol` must equal `STRUCTURE_APP_PROTOCOL` in `src/structure-app.ts`, and the method names must equal `STRUCTURE_APP_METHODS`. Bump both protocol constants together whenever an existing method changes. `mfiles_structure_app_status` reports a mismatch. A new method doesn't need a bump: Ping's `methods` (1.0.11+) lists every method the installed build has, and a tool that needs a newer one says which version to install.

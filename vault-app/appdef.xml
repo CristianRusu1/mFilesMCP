@@ -5,9 +5,9 @@
       xsi:noNamespaceSchemaLocation="http://www.m-files.com/schemas/appdef-server-v3.xsd">
   <guid>a87388a0-5c06-4fca-a858-8209f27bfdad</guid>
   <name>MFilesMCP Structure</name>
-  <description>Vault extension methods that let the mcp-mfiles MCP server read and change metadata structure: property definitions (including calculated values and validation scripts), classes, value lists, workflows (states, transitions, scripts) and VBScript event handlers. Every method requires the Change metadata structure vault right.</description>
+  <description>Vault extension methods that let the mcp-mfiles MCP server read and change metadata structure: object types, property definitions (including calculated values and validation scripts), classes, value lists, workflows (states, transitions, scripts) and VBScript event handlers. Every method requires the Change metadata structure vault right.</description>
   <publisher>Cristian Rusu</publisher>
-  <version>1.0.10</version>
+  <version>1.0.11</version>
   <copyright>MIT License</copyright>
   <required-mfiles-version>23.6.0.0</required-mfiles-version>
   <multi-server-compatible>true</multi-server-compatible>

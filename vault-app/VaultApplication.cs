@@ -45,6 +45,20 @@ namespace MFilesMCP.VaultApp
 		public const string CreateWorkflowMethod = "MFilesMCP_CreateWorkflow";
 		public const string UpdateWorkflowMethod = "MFilesMCP_UpdateWorkflow";
 		public const string SetEventHandlerMethod = "MFilesMCP_SetEventHandler";
+		public const string CreateObjectTypeMethod = "MFilesMCP_CreateObjectType";
+
+		/// <summary>
+		/// Every method this build has, reported by Ping (since 1.0.11) so the
+		/// MCP server can tell whether a newer method is installed without a
+		/// protocol bump: adding a method doesn't change the existing ones.
+		/// </summary>
+		private static readonly string[] Methods =
+		{
+			PingMethod, GetJobMethod, CheckAdminSessionMethod, ReadMethod,
+			CreatePropertyDefMethod, UpdatePropertyDefMethod, CreateClassMethod, UpdateClassMethod,
+			CreateValueListMethod, CreateWorkflowMethod, UpdateWorkflowMethod, SetEventHandlerMethod,
+			CreateObjectTypeMethod,
+		};
 
 		private const MFVaultAccess StructureAccess = MFVaultAccess.MFVaultAccessChangeMetaDataStructure;
 
@@ -118,6 +132,7 @@ namespace MFilesMCP.VaultApp
 				process_identity = AdminSession.ProcessIdentity(),
 				admin_session = adminSession.Status(),
 				jobs = jobs.Status(),
+				methods = Methods,
 			});
 		}
 
@@ -215,6 +230,16 @@ namespace MFilesMCP.VaultApp
 		private string UpdateClass(EventHandlerEnvironment env)
 		{
 			return Submit<UpdateClassRequest>(env, "update_class", request => context => ClassChanges.Update(context, request));
+		}
+
+		[VaultExtensionMethod(CreateObjectTypeMethod, RequiredVaultAccess = StructureAccess)]
+		private string CreateObjectType(EventHandlerEnvironment env)
+		{
+			return Submit<CreateObjectTypeRequest>(env, "create_object_type", request =>
+			{
+				Util.RequireText(request.NameSingular, "name_singular");
+				return context => ObjectTypeChanges.Create(context, request);
+			});
 		}
 
 		[VaultExtensionMethod(CreateValueListMethod, RequiredVaultAccess = StructureAccess)]

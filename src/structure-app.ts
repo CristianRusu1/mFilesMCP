@@ -34,6 +34,8 @@ export const STRUCTURE_APP_METHODS = {
   createWorkflow: "MFilesMCP_CreateWorkflow",
   updateWorkflow: "MFilesMCP_UpdateWorkflow",
   setEventHandler: "MFilesMCP_SetEventHandler",
+  /** Since app 1.0.11. */
+  createObjectType: "MFilesMCP_CreateObjectType",
 } as const;
 
 /** Bump together with the C# Protocol constant when the contract changes. */
@@ -366,6 +368,8 @@ export interface PingResult {
   admin_session?: Record<string, unknown>;
   /** Since app 1.0.7. */
   jobs?: Record<string, unknown>;
+  /** Since app 1.0.11: every extension method the installed build has. */
+  methods?: string[];
 }
 
 export async function pingStructureApp(client: MFilesClient) {
@@ -394,6 +398,7 @@ export async function pingStructureApp(client: MFilesClient) {
       ...(r.startup_error ? { startup_error: r.startup_error } : {}),
       ...(r.process_identity ? { process_identity: r.process_identity } : {}),
       ...(r.jobs ? { jobs: r.jobs } : {}),
+      ...(r.methods ? { methods: r.methods } : {}),
       ...(hint ? { _hint: hint } : {}),
     };
   } catch (err) {
@@ -465,14 +470,16 @@ export async function structureAppStatus(
   };
 }
 
-const checkedApps = new WeakMap<MFilesClient, Promise<void>>();
+type AppStatus = Awaited<ReturnType<typeof pingStructureApp>>;
+
+const checkedApps = new WeakMap<MFilesClient, Promise<AppStatus>>();
 
 /**
  * Structure tools need the vault app speaking this server's protocol: an
  * older app would ignore fields it doesn't know, such as the stale-read guard
  * on class updates. Checked once per session.
  */
-export async function requireCompatibleApp(client: MFilesClient): Promise<void> {
+export async function requireCompatibleApp(client: MFilesClient): Promise<AppStatus> {
   let check = checkedApps.get(client);
   if (!check) {
     check = (async () => {
@@ -485,11 +492,31 @@ export async function requireCompatibleApp(client: MFilesClient): Promise<void> 
           `Install the vault app build that ships with this server (vault-app/bin/Release/MFilesMCP.VaultApp.mfappx), then retry.`,
         );
       }
+      return status;
     })();
     checkedApps.set(client, check);
     check.catch(() => checkedApps.delete(client));
   }
   return check;
+}
+
+/**
+ * Methods added after protocol 3 don't bump the protocol, so older apps keep
+ * serving every tool they can. A tool that needs a newer method checks Ping's
+ * list of methods (app 1.0.11+), pinging again in case the app was upgraded
+ * since the cached check.
+ */
+export async function requireAppMethod(client: MFilesClient, method: string, since: string): Promise<void> {
+  const has = (status: AppStatus) =>
+    "methods" in status && Array.isArray(status.methods) && status.methods.includes(method);
+  if (has(await requireCompatibleApp(client))) return;
+  checkedApps.delete(client);
+  const fresh = await requireCompatibleApp(client);
+  if (has(fresh)) return;
+  throw new MFilesToolError(
+    `The vault app installed in this vault (${"app_version" in fresh ? fresh.app_version : "unknown version"}) can't do this: it has no ${method}.`,
+    `Install vault app ${since} or later (vault-app/bin/Release/MFilesMCP.VaultApp.mfappx) in this vault and restart it; every other structure tool keeps working until then.`,
+  );
 }
 
 export function sameName(a: string, b: string): boolean {
@@ -1237,5 +1264,116 @@ export async function createValueList(
     _hint: failed.length
       ? `The value list exists (id ${created.id}) but ${failed.length} item(s) failed; retry them with mfiles_create_value_list_item.`
       : `Use value_list_id=${created.id} with mfiles_create_property_def (data_type SingleSelectLookup or MultiSelectLookup) to make a property that draws from it.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Object types
+
+interface CreatedObjectType {
+  id: number;
+  name_singular: string;
+  name_plural: string;
+  can_have_files: boolean;
+  allow_adding: boolean;
+  owner_object_type?: number | null;
+  owner_property_def?: number | null;
+  default_property_def: number;
+  classes: Array<{ id: number; name: string }>;
+}
+
+export interface CreateObjectTypeArgs {
+  nameSingular: string;
+  namePlural?: string;
+  canHaveFiles: boolean;
+  allowAdding: boolean;
+  ownerObjectTypeId?: number;
+  aliases: string[];
+  allowDuplicateName: boolean;
+  dryRun: boolean;
+}
+
+/**
+ * Create an object type (objects with metadata cards, unlike a value list).
+ * M-Files adds a property definition that refers to the new type, and
+ * usually a class of the same name.
+ */
+export async function createObjectType(client: MFilesClient, args: CreateObjectTypeArgs) {
+  const nameSingular = args.nameSingular.trim();
+  const namePlural = args.namePlural?.trim() || nameSingular;
+  if (!nameSingular) {
+    throw new MFilesToolError("The object type name is empty.", "Pass a non-blank name_singular.");
+  }
+
+  const [types, lists, owner] = await Promise.all([
+    client.listObjectTypes(),
+    client.listValueLists(),
+    args.ownerObjectTypeId !== undefined ? client.getObjectType(args.ownerObjectTypeId) : undefined,
+  ]);
+  const seen = new Set<number>();
+  const all = [...types, ...lists].filter((t) => !seen.has(t.ID) && seen.add(t.ID));
+  const duplicates = all.filter(
+    (t) => sameName(t.Name, nameSingular) || (typeof t.NamePlural === "string" && sameName(t.NamePlural, namePlural)),
+  );
+  if (duplicates.length && !args.allowDuplicateName) {
+    throw new MFilesToolError(
+      `An object type or value list is already called "${nameSingular}" or "${namePlural}": ${duplicates.map((t) => `${t.ID} ("${t.Name}")`).join(", ")}.`,
+      "Use it (mfiles_create_class adds classes to an object type), pick another name, or pass allow_duplicate_name=true.",
+    );
+  }
+
+  const plan = {
+    object_type: {
+      name_singular: nameSingular,
+      name_plural: namePlural,
+      can_have_files: args.canHaveFiles,
+      allow_adding: args.allowAdding,
+      ...(owner ? { owner: { id: owner.ID, name: owner.Name } } : {}),
+      ...(args.aliases.length ? { aliases: args.aliases } : {}),
+    },
+  };
+  if (args.dryRun) {
+    return {
+      dry_run: true,
+      ...plan,
+      _hint: "Nothing was written. Call again with dry_run=false to create it. M-Files also adds a property definition that refers to the new type, and usually a class of the same name.",
+    };
+  }
+
+  await requireAppMethod(client, STRUCTURE_APP_METHODS.createObjectType, "1.0.11");
+  let created: CreatedObjectType;
+  let diagnostics: AppDiagnostics | undefined;
+  try {
+    ({ result: created, diagnostics } = await runStructureJob<CreatedObjectType>(
+      client,
+      STRUCTURE_APP_METHODS.createObjectType,
+      {
+        name_singular: nameSingular,
+        name_plural: namePlural,
+        can_have_files: args.canHaveFiles,
+        allow_adding: args.allowAdding,
+        ...(args.ownerObjectTypeId !== undefined ? { owner_object_type: args.ownerObjectTypeId } : {}),
+        aliases: args.aliases,
+      },
+    ));
+  } catch (err) {
+    if (!(err instanceof StructureJobPendingError)) throw err;
+    // M-Files can keep a structure save open long after applying it.
+    const fresh = (await client.listObjectTypes()).find(
+      (t) => sameName(t.Name, nameSingular) && !types.some((old) => old.ID === t.ID),
+    );
+    if (!fresh) throw err;
+    return {
+      created: true,
+      object_type: { id: fresh.ID, name_singular: fresh.Name, name_plural: fresh.NamePlural },
+      _hint: `REST shows the new object type, but M-Files is still finishing the save (job ${err.job.job_id}). Add classes with mfiles_create_class object_type_id=${fresh.ID}.`,
+    };
+  }
+  const classes = created.classes ?? [];
+  return {
+    created: true,
+    object_type: created,
+    ...(diagnostics ? { vault_app: diagnostics } : {}),
+    _hint: `M-Files added property definition ${created.default_property_def} (it refers to the new type)${classes.length ? ` and class ${classes.map((c) => `${c.id} "${c.name}"`).join(", ")}` : ""}. Add properties with mfiles_update_class, or more classes with mfiles_create_class object_type_id=${created.id}.`,
   };
 }

@@ -152,6 +152,7 @@ Status and reads:
 Changes:
 - `mfiles_create_property_def(vault_guid, name, data_type, value_list_id?, defined_for_object_type_id?, all_object_types?, aliases?, add_to_classes?, allow_duplicate_name?, dry_run?)` — create a property definition and optionally add it to classes in the same call. When you pass `add_to_classes`, the "defined for" object type is inferred from those classes.
 - `mfiles_update_property_def(vault_guid, property, rename?, add_aliases?, remove_aliases?, automatic_value?, validation?, recalculate?, dry_run?)` — rename, aliases, calculated values (placeholders or VBScript), automatic numbering, regex or VBScript validation.
+- `mfiles_create_object_type(vault_guid, name_singular, name_plural?, can_have_files?, allow_adding?, owner_object_type_id?, aliases?, dry_run?)` — a new kind of object, like Customer or Project. M-Files also adds a property definition that refers to it, and usually a class of the same name. Needs vault app 1.0.11.
 - `mfiles_create_class(vault_guid, object_type_id, name, name_property?, properties?, workflow?, force_workflow?, aliases?, dry_run?)`
 - `mfiles_update_class(vault_guid, class_id, add?, remove?, rename?, workflow?, force_workflow?, name_property?, dry_run?)` — add or remove properties, change required flags, rename, set or remove (`workflow: null`) the workflow, change the name property.
 - `mfiles_create_value_list(vault_guid, name_singular, name_plural?, items?, aliases?, allow_duplicate_name?, dry_run?)` — create a value list with initial items.

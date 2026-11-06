@@ -254,6 +254,30 @@ namespace MFilesMCP.VaultApp
 		public List<int> Associations { get; set; }
 	}
 
+	internal sealed class CreateObjectTypeRequest : JobRequest
+	{
+		[JsonProperty("name_singular", Required = Required.Always)]
+		public string NameSingular { get; set; }
+
+		[JsonProperty("name_plural")]
+		public string NamePlural { get; set; }
+
+		/// <summary>Whether objects of the type can hold files, like documents.</summary>
+		[JsonProperty("can_have_files")]
+		public bool CanHaveFiles { get; set; }
+
+		/// <summary>Whether users can create objects of the type. Defaults to true.</summary>
+		[JsonProperty("allow_adding")]
+		public bool? AllowAdding { get; set; }
+
+		/// <summary>The object type or value list that owns objects of this type, if any.</summary>
+		[JsonProperty("owner_object_type")]
+		public int? OwnerObjectType { get; set; }
+
+		[JsonProperty("aliases")]
+		public List<string> Aliases { get; set; }
+	}
+
 	internal sealed class CreateValueListRequest : JobRequest
 	{
 		[JsonProperty("name_singular", Required = Required.Always)]

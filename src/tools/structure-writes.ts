@@ -7,6 +7,7 @@ import type { PropertyRef } from "../object-writes.js";
 import {
   CREATABLE_DATA_TYPES,
   createClass,
+  createObjectType,
   createPropertyDef,
   createValueList,
   getStructureJob,
@@ -296,6 +297,54 @@ export function registerStructureWriteTools(server: McpServer): void {
               : undefined,
             validation: input.validation,
             recalculate: input.recalculate ?? "none",
+            dryRun: input.dry_run ?? false,
+          }),
+        );
+      }),
+  );
+
+  server.registerTool(
+    "mfiles_create_object_type",
+    {
+      description:
+        `Create an object type: a kind of object with its own metadata cards, like Document, Customer or Project (a value list is the plain alternative, see mfiles_create_value_list). M-Files also adds a property definition that refers to the new type, and usually a class of the same name; the result lists them. Then add classes with mfiles_create_class. ${NEEDS_APP} Needs vault app 1.0.11 or later. Use dry_run=true to preview.`,
+      inputSchema: {
+        vault_guid: z.string(),
+        name_singular: z.string().min(1),
+        name_plural: z.string().optional().describe("Defaults to name_singular."),
+        can_have_files: z
+          .boolean()
+          .optional()
+          .default(false)
+          .describe("Whether its objects can hold files, like documents."),
+        allow_adding: z
+          .boolean()
+          .optional()
+          .default(true)
+          .describe("Whether users can create objects of this type."),
+        owner_object_type_id: z
+          .number()
+          .int()
+          .optional()
+          .describe("An object type that owns objects of this type (e.g. Project owning Task)."),
+        aliases: z.array(z.string().min(1)).optional().default([]),
+        allow_duplicate_name: z.boolean().optional().default(false),
+        dry_run: z.boolean().optional().default(false),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async (input) =>
+      runTool(async () => {
+        const client = sessions.require(input.vault_guid);
+        return ok(
+          await createObjectType(client, {
+            nameSingular: input.name_singular,
+            namePlural: input.name_plural,
+            canHaveFiles: input.can_have_files ?? false,
+            allowAdding: input.allow_adding ?? true,
+            ownerObjectTypeId: input.owner_object_type_id,
+            aliases: input.aliases ?? [],
+            allowDuplicateName: input.allow_duplicate_name ?? false,
             dryRun: input.dry_run ?? false,
           }),
         );
