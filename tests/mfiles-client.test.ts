@@ -1,7 +1,8 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { MFilesClient } from "../src/mfiles-client.js";
+import { MFilesClient, extractErrorMessage } from "../src/mfiles-client.js";
 import { MFilesAuthError, MFilesRequestError } from "../src/types.js";
+import { connect } from "./helpers.js";
 
 type FetchCall = {
   url: string;
@@ -189,5 +190,105 @@ describe("MFilesClient.request (via list/get methods)", () => {
     await client.authenticate("g", "u", "p");
     const result = await client.listClasses(104);
     assert.deepEqual(result.map((c) => c.ID), [2, 3]);
+  });
+});
+
+describe("MFilesClient writes", () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => restore?.());
+
+  it("tunnels PUT through POST with ?_method=PUT and a JSON body", async () => {
+    const mock = await connect([
+      {
+        method: "PUT",
+        path: "/REST/objects/0/42/latest/checkedout.aspx",
+        json: { ObjVer: { ID: 42, Type: 0, Version: 6 } },
+      },
+    ]);
+    restore = mock.restore;
+    const ov = await mock.client.checkOut(0, 42);
+    assert.equal(ov.ObjVer.Version, 6);
+    assert.equal(mock.calls[0].httpMethod, "POST");
+    assert.equal(
+      mock.calls[0].rawUrl,
+      "https://vault.example.com/REST/objects/0/42/latest/checkedout.aspx?_method=PUT",
+    );
+    assert.equal(mock.calls[0].headers["Content-Type"], "application/json");
+    assert.deepEqual(JSON.parse(mock.calls[0].body!), { Value: 2 });
+  });
+
+  it("tunnels DELETE and resolves 204 No Content without parsing a body", async () => {
+    const mock = await connect([
+      { method: "DELETE", path: "/REST/objects/0/42/6.aspx", status: 204 },
+    ]);
+    restore = mock.restore;
+    await mock.client.undoCheckout(0, 42, 6);
+    assert.equal(mock.calls[0].httpMethod, "POST");
+    assert.equal(
+      mock.calls[0].rawUrl,
+      "https://vault.example.com/REST/objects/0/42/6.aspx?_method=DELETE",
+    );
+  });
+
+  it("surfaces the Message of an MFWS error body", async () => {
+    const mock = await connect([
+      {
+        method: "POST",
+        path: "/REST/objects/0/42/6/properties.aspx",
+        status: 500,
+        text: JSON.stringify({
+          Status: 500,
+          Message: "The object is checked out to another user.",
+          Exception: { Name: "COMException", Message: "inner" },
+        }),
+      },
+    ]);
+    restore = mock.restore;
+    await assert.rejects(
+      () => mock.client.setProperties(0, 42, 6, []),
+      (err: unknown) =>
+        err instanceof MFilesRequestError &&
+        err.status === 500 &&
+        err.serverMessage === "The object is checked out to another user." &&
+        err.message.endsWith("The object is checked out to another user."),
+    );
+  });
+
+  it("URL-encodes value list filters", async () => {
+    const mock = await connect([
+      { path: /^\/REST\/valuelists\/5\/items\.aspx\?filter=/, json: { Items: [] } },
+    ]);
+    restore = mock.restore;
+    await mock.client.findValueListItems(5, "R&D / Lab");
+    assert.equal(
+      mock.calls[0].rawUrl,
+      "https://vault.example.com/REST/valuelists/5/items.aspx?filter=R%26D%20%2F%20Lab",
+    );
+  });
+
+  it("sends extension method input as text/plain and returns the raw output", async () => {
+    const mock = await connect([
+      { method: "POST", path: "/REST/vault/extensionmethod/My_Method.aspx", text: "{\"ok\":true}" },
+    ]);
+    restore = mock.restore;
+    const out = await mock.client.executeExtensionMethod("My_Method", "{\"a\":1}");
+    assert.equal(out, "{\"ok\":true}");
+    assert.equal(mock.calls[0].headers["Content-Type"], "text/plain; charset=utf-8");
+    assert.equal(mock.calls[0].body, "{\"a\":1}");
+  });
+});
+
+describe("extractErrorMessage", () => {
+  it("prefers the top-level Message, then Exception.Message", () => {
+    assert.equal(extractErrorMessage(JSON.stringify({ Message: " top " })), "top");
+    assert.equal(
+      extractErrorMessage(JSON.stringify({ Exception: { Message: "inner" } })),
+      "inner",
+    );
+  });
+
+  it("returns undefined for non-JSON or message-less bodies", () => {
+    assert.equal(extractErrorMessage("<html>"), undefined);
+    assert.equal(extractErrorMessage(JSON.stringify({ Status: 500 })), undefined);
   });
 });

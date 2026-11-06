@@ -2,25 +2,49 @@
 
 ## Product intent
 
-- This MCP is a **vault structure explorer**. The goal is to surface object types, classes, properties, value lists, and their relationships faster than the M-Files Admin UI does.
+- This MCP is first a **vault structure explorer**. The goal is to surface object types, classes, properties, value lists, and their relationships faster than the M-Files Admin UI does.
+- It can also **write**, but only when `MFILES_ALLOW_WRITES=true`: object metadata over REST, and metadata structure through the companion VAF app in `vault-app/`. The app covers property definitions (including calculated values and validation scripts), classes, value lists, workflows (states, transitions, their scripts) and VBScript event handlers.
 - The server must work against **any** vault. Nothing is vault-specific.
 
 ## Hard rules
 
-- **Never hardcode object type, class, property, or value list IDs.** They are assigned per vault and differ across environments. All IDs come from live introspection calls.
+- **Never hardcode object type, class, property, or value list IDs.** They are assigned per vault and differ across environments. All IDs come from live introspection calls. The one exception is M-Files' *built-in* IDs (e.g. property 100 = Class, `MFBuiltInPropertyDef`), which are identical in every vault. Keep those in `BuiltInPropertyDef` in `src/types.ts`, with a comment.
 - **Log to stderr only.** Stdout is reserved for the MCP JSON-RPC channel. Using `console.log` will corrupt the protocol.
 - **ESM, Node 20+, `StdioServerTransport`.**
 - **Validate every tool input with Zod.** Output is always stringified JSON inside a text content block.
+- **Write tools are registered only when `writesEnabled()`** (see `src/index.ts`). Every write tool takes `dry_run`, validates against the live structure before writing, and carries MCP `annotations`. Nothing may delete structure (property definitions, classes, value lists, workflow states, event handlers). The only removals are taking a property off a class and removing a workflow transition; event handlers are switched off with `active=false`.
+- **The VAF app and the TS bridge share a contract.** Method names and `Protocol` in `vault-app/VaultApplication.cs` must match `STRUCTURE_APP_METHODS` / `STRUCTURE_APP_PROTOCOL` in `src/structure-app.ts`. Bump both protocol constants together.
+- **VAF app gotchas, all learned on live M-Files 25 servers:**
+  - The app class must implement `IUsesVaultExtensionMethods`, or the VAF task manager throws during `StartOperations`.
+  - Never set `EmbedInteropTypes` on `Interop.MFilesAPI`.
+  - Keep `KillProcessOnStartOperationsException = false` and the `startup_error` reporting in Ping. Without them, any startup failure shows up only as an endless "vault applications are still starting up", with the cause buried in the server's Windows event log.
+  - Never move entries from one M-Files COM collection to another, e.g. adding an `AssociatedPropertyDef` read from a class to a new `AssociatedPropertyDefs`. M-Files silently drops them. Build fresh entries, and verify the class after saving it.
+  - M-Files refuses admin changes inside the extension method's own transaction (`env.Vault`): "Incompatible isolation levels". Changes made while the extension method waited took 20 seconds to 2 minutes, longer than MCP clients wait. So since protocol 3 every method except Ping and GetJob only queues a job (`vault-app/Jobs.cs`) and returns it; one worker thread runs the jobs, and `runStructureJob` in `src/structure-app.ts` polls `MFilesMCP_GetJob`. If a job outlives the wait (`MFILES_STRUCTURE_WAIT_SECONDS`, default 45), the tool returns its job_id for `mfiles_structure_job`. Never let a method wait for its job: the waiting request keeps a transaction open.
+  - Admin reads of classes are incomplete on M-Files 25.11, for every class and through every session. That includes PermanentVault ("(M-Files Server)", user -102) and an admin session opened the way M-Files Admin opens one. `GetObjectClassAdmin`, `GetObjectClassesAdmin` and `GetAllObjectClassesAdmin` list only the class's name property in `AssociatedPropertyDefs`. The regular `GetObjectClass` (what REST shows) has the full list, and `UpdateObjectClassAdmin` with a full list saves correctly. Saving the short copy as it is removed a class's other properties twice on a live vault. So `ClassChanges.Load` only works from a copy that matches the REST state in `expected`.
+    - When the admin copy only lacks properties, it takes the user-settable list from the regular read.
+    - It does that only after checking several things. The regular read must match REST. The admin copy's `ACLForObjects` must be `EqualTo` the regular read's (or `HasIdenticalPermissions`), and the automatic permissions must agree. Its aliases must equal the vault's alias map (`GetMetadataStructureItemIDsByAliases`). That call is "Not implemented" on 25.11, so there each alias must instead resolve to the class through `GetObjectClassIDByAlias`. A class created on 25.11 got its alias back from an admin read, so only the property list is affected.
+    - After saving it re-reads the regular read, and the MCP checks REST again.
+  - Read-modify-write changes go through the app's **admin session** (`vault-app/AdminSession.cs`): its own COM connection to the local server (`ConnectAdministrativeEx` + `LogInToVaultAdministrative`). It logs in as the app's Windows account first, then with the credentials the MCP sends if that fails (`MFILES_STRUCTURE_LOGIN`). On MIMS 26 it logs in as NT AUTHORITY\SYSTEM without a password. Workflows, event handlers and property definitions read completely through it. Workflow, event handler and property updates use the admin session only, because their scripts and actions can't be checked against REST.
+  - M-Files writes VBScript stub event handlers that hand events and extension methods over to vault apps. A stub says DO NOT MODIFY, and either contains `GENERATED_SCRIPT_START_<app guid>` or calls `GetExtensionObject("<assembly>", "<app guid>")`. Listings hide these stubs by default, and both the MCP and the app refuse to edit them.
+  - On MIMS 26 (25.11), a class save shows up in REST within seconds, but `UpdateObjectClassAdmin` can stay open for up to 2 minutes afterwards, which held up every queued job. `Util.SaveAndConfirm` waits 10 seconds, then returns as soon as the regular read shows the change; the job's `late_note` says what the save call did afterwards. If a class job is still running when the tool stops waiting, `updateClass` checks REST and reports success if the change is there.
+  - Event handlers can only be saved as a whole list (`SetEventHandlers`). Every change re-reads the list, refuses if the GUIDs differ from `expected_guids`, and afterwards checks that every other handler is unchanged.
+  - A new state has no ID until its workflow is saved, so transitions to new states go in a second save (`WorkflowChanges.Update`).
 
 ## Real vault-agnostic M-Files REST quirks
 
 - Always fetch property details from `structure/properties/{id}.aspx`. The bulk `structure/properties.aspx` response omits `ValueList` bindings in some versions.
 - `X-Authentication` header carries the session token. A 401 means the token expired — clear the cached session and surface an error telling the LLM to re-authenticate.
 - REST date fields are ISO 8601 on the wire regardless of how the M-Files client UI displays them. Display format is a per-vault/per-user setting and not something this MCP cares about.
-- `DataType` on a property definition is an integer enum (M-Files `MFDataType`). Canonical values: `0=Uninitialized`, `1=Text`, `2=Integer`, `3=Floating`, `5=Date`, `6=Time`, `7=Timestamp`, `8=SingleSelectLookup`, `9=MultiSelectLookup`, `10=MultiLineText`, `11=Boolean`, `12=FileReference`, `13=Integer64`. Include a resolved `DataTypeName` in responses. Note: plan.md's original draft had a few values swapped; this is the correct mapping from the MFWS.
+- `DataType` on a property definition is an integer enum (M-Files `MFDataType`, the same in REST and COM). Values: `0=Uninitialized`, `1=Text`, `2=Integer`, `3=Floating`, `5=Date`, `6=Time`, `7=Timestamp`, `8=Boolean`, `9=Lookup` (shown as `SingleSelectLookup`), `10=MultiSelectLookup`, `11=Integer64`, `12=FILETIME`, `13=MultiLineText`, `14=ACL`. Include a resolved `DataTypeName` in responses. This was verified against built-in properties on a live vault: Single file=8, Class=9, Assigned to=10, Comment=13. An earlier version of this file had 8–13 wrong.
+- **Structure is read-only over REST.** `/structure/*` only supports GET. Every structure change has to go through the vault app (`POST /REST/vault/extensionmethod/{name}.aspx`, raw `text/plain` body in and out). REST does list workflows and their states (`/structure/workflows`, `/structure/workflows/{id}/states`); state transitions are items of built-in value list 17, owned by their workflow. REST shows no scripts, event handlers, aliases or validation.
+- **Property writes need a checkout.** Check out (`PUT .../checkedout` with `{Value: 2}`), POST `.../properties` (adds or overwrites), check in (`{Value: 0}`). On failure, `DELETE` the checked-out version, which undoes the checkout. `updateObjectProperties` in `src/object-writes.ts` does all of this.
+- **Tunnel PUT/DELETE through POST** with `?_method=PUT|DELETE`; IIS often rejects the real verbs. `MFilesClient.send` does this.
+- MFWS error bodies are JSON with a `Message` field. `extractErrorMessage` puts it into `MFilesRequestError.serverMessage`.
+- MFWS calls a class's force-workflow flag `HasForcedWorkflow`, not `ForcedWorkflow`; `forcedWorkflow()` in `src/structure-app.ts` reads either.
+- Lookup values are `{ Item, Version: -1 }` (`-1` = latest). Clearing a value is `HasValue: false` with a null `Value`/`Lookup` or empty `Lookups`.
 
 ## Design principles
 
-- **Composite over chained.** When the LLM asks a high-level question ("describe the Patient class"), a composite tool should answer it in one call. Don't force the LLM to chain 10 atomic calls.
-- **Errors should teach the LLM what to do next.** Return `{ error, hint }` pairs. Example hint: "Token expired — call `mfiles_authenticate_from_env` first."
+- **Composite over chained.** When the LLM asks a high-level question ("describe the Patient class"), a composite tool should answer it in one call. Don't force the LLM to chain 10 atomic calls. The write tools follow this too: names resolve to IDs, `create_property_def` can add to classes, and the update tool handles checkout itself.
+- **Errors should teach the LLM what to do next.** Return `{ error, hint }` pairs. Example hint: "Token expired — call `mfiles_authenticate_from_env` first." Throw `MFilesToolError(message, hint)` for anything you can explain.
 - **Truncate and redirect on huge responses.** If a bulk list is massive, truncate and point the LLM at `mfiles_find_by_name` or a more specific endpoint.

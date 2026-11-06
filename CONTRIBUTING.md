@@ -22,6 +22,8 @@ npm run smoke:mcp # full MCP protocol flow test (auth + find_by_name + describe_
 
 `npm test` is the only command that works without a real vault. Always run it before pushing.
 
+The companion vault app in `vault-app/` builds with `dotnet build -c Release` (or Visual Studio). See [vault-app/README.md](vault-app/README.md).
+
 ## What makes a good PR
 
 - **Keep it vault-agnostic.** No hardcoded object type, class, property, or value list IDs. All IDs come from live introspection.
@@ -32,11 +34,22 @@ npm run smoke:mcp # full MCP protocol flow test (auth + find_by_name + describe_
 
 ## Good first issues
 
-- Additional atomic tools from the [MFWS reference](https://developer.m-files.com/APIs/REST-API/Reference/) (workflows, views, user groups) — with tests.
+- Additional atomic tools from the [MFWS reference](https://developer.m-files.com/APIs/REST-API/Reference/) (views, user groups) — with tests.
 - Better truncation strategies for huge vaults (e.g. pagination hints).
 - Windows-path / permissions gotchas in the Claude Desktop config docs.
 
+## Write tools
+
+Writes exist, but stay behind `MFILES_ALLOW_WRITES=true`. New write tools must:
+
+- be registered only in `registerObjectTools` / `registerStructureWriteTools` (both gated in `src/index.ts`);
+- support `dry_run` and validate against the live structure before writing;
+- carry MCP `annotations` (`readOnlyHint: false`, plus `destructiveHint`);
+- have mocked-fetch tests for the request sequence, including the failure path;
+- if they go through the vault app, run as a job via `runStructureJob`, and go through the app's admin session whenever they read before they write (see `vault-app/README.md`).
+
 ## What's out of scope for now
 
-- Object reads / writes (search/get/create/update). Sketched in [plan.md](plan.md) §Phase 8 but intentionally deferred — this is a structure explorer first.
+- Deleting metadata structure (property definitions, classes, value lists, workflow states, event handlers). It's too easy to do by accident from chat.
+- Object search, file uploads, and workflow state changes.
 - Anything vault-specific, including helpers that assume particular class names like "Patient" or "Invoice".

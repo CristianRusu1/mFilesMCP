@@ -6,3 +6,7 @@ dist/
 
 # Claude Code per-machine settings
 .claude/
+
+# Vault app build output
+vault-app/bin/
+vault-app/obj/

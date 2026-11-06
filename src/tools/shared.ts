@@ -1,5 +1,18 @@
-import { MFilesAuthError, MFilesRequestError } from "../types.js";
+import {
+  MFilesAuthError,
+  MFilesRequestError,
+  MFilesToolError,
+} from "../types.js";
 import { logError } from "../logger.js";
+
+/**
+ * Write tools (and the object-level reads that go with them) are registered
+ * only when MFILES_ALLOW_WRITES is set, so a server pointed at production
+ * stays a read-only structure explorer by default.
+ */
+export function writesEnabled(): boolean {
+  return /^(1|true|yes|on)$/i.test((process.env.MFILES_ALLOW_WRITES ?? "").trim());
+}
 
 export type ToolTextResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -50,6 +63,9 @@ export async function runTool(
     return await fn();
   } catch (err) {
     logError(err);
+    if (err instanceof MFilesToolError) {
+      return fail(err.message, err.hint);
+    }
     if (err instanceof MFilesAuthError) {
       return fail(
         err.message,
@@ -61,7 +77,11 @@ export async function runTool(
         err.message,
         err.status === 404
           ? "Resource not found. Verify the ID by listing structure items first."
-          : "REST call failed. Check the vault URL, network, and that the vault is online.",
+          : err.status === 403
+            ? "The authenticated user lacks permission for this operation."
+            : err.serverMessage
+              ? "M-Files rejected the request; the error says why. Fix the input or object state and retry."
+              : "REST call failed. Check the vault URL, network, and that the vault is online.",
       );
     }
     const msg = err instanceof Error ? err.message : String(err);

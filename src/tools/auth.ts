@@ -2,7 +2,10 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { MFilesClient } from "../mfiles-client.js";
 import { sessions } from "../session.js";
-import { fail, ok, runTool } from "./shared.js";
+import { fail, ok, runTool, writesEnabled } from "./shared.js";
+
+const WRITES_DISABLED_HINT =
+  "Write tools are off. Set MFILES_ALLOW_WRITES=true in this server's env block and restart the client to enable them.";
 
 function readEnvCreds() {
   const { MFILES_URL, MFILES_VAULT_GUID, MFILES_USERNAME, MFILES_PASSWORD } =
@@ -110,7 +113,7 @@ export function registerAuthTools(server: McpServer): void {
     "mfiles_status",
     {
       description:
-        "Report which vaults currently have an active session and when each token expires. Optionally filter by vault_guid.",
+        "Report which vaults currently have an active session, when each token expires, and whether write tools are enabled. Optionally filter by vault_guid.",
       inputSchema: {
         vault_guid: z
           .string()
@@ -121,6 +124,11 @@ export function registerAuthTools(server: McpServer): void {
     async ({ vault_guid }) =>
       runTool(async () => {
         const all = sessions.list();
+        const writes = writesEnabled();
+        const writesInfo = {
+          writes_enabled: writes,
+          ...(writes ? {} : { _writes_hint: WRITES_DISABLED_HINT }),
+        };
         if (vault_guid) {
           const key = vault_guid.replace(/[{}]/g, "").toUpperCase();
           const match = all.find(
@@ -135,6 +143,7 @@ export function registerAuthTools(server: McpServer): void {
                   _hint:
                     "Not authenticated. Call mfiles_authenticate_from_env.",
                 }),
+            ...writesInfo,
           });
         }
         return ok({
@@ -142,6 +151,7 @@ export function registerAuthTools(server: McpServer): void {
           ...(all.length === 0
             ? { _hint: "No active sessions. Call mfiles_authenticate_from_env." }
             : {}),
+          ...writesInfo,
         });
       }),
   );
